@@ -33,10 +33,15 @@ android {
       keyPassword = System.getenv("KEY_PASSWORD")
     }
     create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
+      val localKeystore = file("${rootDir}/debug.keystore")
+      if (localKeystore.exists()) {
+        storeFile = localKeystore
+        storePassword = "android"
+        keyAlias = "androiddebugkey"
+        keyPassword = "android"
+      } else {
+        initWith(getByName("debug"))
+      }
     }
   }
 
@@ -50,9 +55,13 @@ android {
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
-      signingConfig = signingConfigs.getByName("debugConfig")
+      // Use standard AGP built-in debug signing when root debug.keystore is not present (e.g. GitHub Actions)
+      val localKeystore = file("${rootDir}/debug.keystore")
+      signingConfig = if (localKeystore.exists()) {
+        signingConfigs.getByName("debugConfig")
+      } else {
+        signingConfigs.getByName("debug")
+      }
     }
   }
   compileOptions {

@@ -1,13 +1,19 @@
 package com.example.ui.components
 
-import android.graphics.Color as AndroidColor
 import android.media.MediaPlayer
 import android.net.Uri
+import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -23,6 +29,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,8 +39,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
@@ -66,6 +74,9 @@ import com.example.ui.viewmodel.AspectRatioMode
 import com.example.ui.viewmodel.CaptionPosition
 import com.example.ui.viewmodel.CaptionStyle
 import com.example.ui.viewmodel.TransitionEffect
+import kotlinx.coroutines.delay
+
+private const val TAG = "VideoPlayerView"
 
 @Composable
 fun VideoPlayerView(
@@ -90,57 +101,90 @@ fun VideoPlayerView(
     val context = LocalContext.current
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     var isMediaPrepared by remember { mutableStateOf(false) }
+    var isVideoFailed by remember { mutableStateOf(false) }
 
-    // Synchronize media playback speed
-    LaunchedEffect(speedMultiplier, mediaPlayer, isMediaPrepared) {
-        if (isMediaPrepared) {
+    // Synchronize media playback speed safely
+    LaunchedEffect(speedMultiplier, mediaPlayer, isMediaPrepared, isVideoFailed) {
+        if (isMediaPrepared && !isVideoFailed) {
             try {
-                mediaPlayer?.playbackParams = mediaPlayer?.playbackParams?.setSpeed(speedMultiplier) ?: return@LaunchedEffect
+                mediaPlayer?.let { player ->
+                    player.playbackParams = player.playbackParams.setSpeed(speedMultiplier)
+                }
             } catch (e: Exception) {
-                // Ignore if device playback param not supported
+                Log.w(TAG, "Speed adjustment skipped: ${e.message}")
             }
         }
     }
 
-    // Synchronize play/pause
-    LaunchedEffect(isPlaying, isMediaPrepared) {
-        if (isMediaPrepared) {
+    // Synchronize play/pause safely
+    LaunchedEffect(isPlaying, isMediaPrepared, isVideoFailed) {
+        if (isMediaPrepared && !isVideoFailed) {
             try {
-                if (isPlaying) {
-                    if (mediaPlayer?.isPlaying == false) {
-                        mediaPlayer?.start()
+                mediaPlayer?.let { player ->
+                    if (isPlaying) {
+                        if (!player.isPlaying) player.start()
+                    } else {
+                        if (player.isPlaying) player.pause()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Playback toggle handled: ${e.message}")
+            }
+        }
+    }
+
+    // Robust playback loop with automatic simulation fallback
+    LaunchedEffect(isPlaying, isMediaPrepared, isVideoFailed, inTimestampMs, outTimestampMs, speedMultiplier) {
+        if (isPlaying) {
+            val stepMs = 100L
+            val delayMs = ((stepMs / speedMultiplier).toLong()).coerceIn(20L, 500L)
+
+            while (isPlaying) {
+                if (isMediaPrepared && !isVideoFailed && mediaPlayer != null) {
+                    try {
+                        val currentPos = mediaPlayer!!.currentPosition.toLong()
+                        onPositionChanged(currentPos)
+
+                        // Loop back to inTimestamp if reaching clip boundary
+                        if (currentPos >= outTimestampMs || currentPos < inTimestampMs) {
+                            mediaPlayer!!.seekTo(inTimestampMs.toInt())
+                            onPositionChanged(inTimestampMs)
+                        }
+                    } catch (e: Exception) {
+                        // Fall back to software timer tracking
+                        val next = (currentPositionMs + (stepMs * speedMultiplier).toLong())
+                        if (next >= outTimestampMs) {
+                            onPositionChanged(inTimestampMs)
+                        } else {
+                            onPositionChanged(next)
+                        }
                     }
                 } else {
-                    if (mediaPlayer?.isPlaying == true) {
-                        mediaPlayer?.pause()
-                    }
-                }
-            } catch (e: Exception) {
-                // Safely catch transient playback exceptions
-            }
-        }
-    }
-
-    // Playback loop polling and boundary checking
-    LaunchedEffect(isPlaying, isMediaPrepared, inTimestampMs, outTimestampMs) {
-        while (isPlaying && isMediaPrepared) {
-            mediaPlayer?.let { player ->
-                try {
-                    val currentPos = player.currentPosition.toLong()
-                    onPositionChanged(currentPos)
-
-                    // If reached outTimestamp, loop back to inTimestamp
-                    if (currentPos >= outTimestampMs || currentPos < inTimestampMs) {
-                        player.seekTo(inTimestampMs.toInt())
+                    // Smooth, simulated playback progression for preview & trimming
+                    val advance = (stepMs * speedMultiplier).toLong()
+                    val next = currentPositionMs + advance
+                    if (next >= outTimestampMs || next < inTimestampMs) {
                         onPositionChanged(inTimestampMs)
+                    } else {
+                        onPositionChanged(next)
                     }
-                } catch (e: Exception) {
-                    // Ignore state errors during fast seeks
                 }
+                delay(delayMs)
             }
-            kotlinx.coroutines.delay(100)
         }
     }
+
+    // Subtle scanline animation during active playback in simulation mode
+    val infiniteTransition = rememberInfiniteTransition(label = "playbackScan")
+    val scanProgress by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "scanProgress"
+    )
 
     BoxWithConstraints(
         modifier = modifier
@@ -153,7 +197,7 @@ fun VideoPlayerView(
         val containerWidth = maxWidth
         val targetRatio = aspectRatioMode.ratio
 
-        // Outer container maintaining chosen aspect ratio
+        // Outer container maintaining chosen aspect ratio (e.g. 9:16 Portrait for TikTok/Reels)
         Box(
             modifier = Modifier
                 .width(containerWidth)
@@ -180,63 +224,124 @@ fun VideoPlayerView(
                 )
             }
 
-            // Real Android Surface VideoView for video playback
-            AndroidView(
-                factory = { ctx ->
-                    val frameLayout = FrameLayout(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                    }
-
-                    val surfaceView = SurfaceView(ctx).apply {
-                        layoutParams = FrameLayout.LayoutParams(
-                            FrameLayout.LayoutParams.MATCH_PARENT,
-                            FrameLayout.LayoutParams.MATCH_PARENT
-                        )
-                    }
-
-                    surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
-                        override fun surfaceCreated(holder: SurfaceHolder) {
-                            try {
-                                val player = MediaPlayer().apply {
-                                    setDisplay(holder)
-                                    setDataSource(ctx, Uri.parse(videoStreamUrl))
-                                    isLooping = false
-                                    setOnPreparedListener { mp ->
-                                        isMediaPrepared = true
-                                        mp.seekTo(inTimestampMs.toInt())
-                                        if (isPlaying) mp.start()
-                                    }
-                                    prepareAsync()
-                                }
-                                mediaPlayer = player
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                            }
-                        }
-
-                        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
-
-                        override fun surfaceDestroyed(holder: SurfaceHolder) {
-                            try {
-                                mediaPlayer?.release()
-                                mediaPlayer = null
-                                isMediaPrepared = false
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                            }
-                        }
-                    })
-
-                    frameLayout.addView(surfaceView)
-                    frameLayout
-                },
+            // Central Video Display Container
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(16f / 9f) // Native video aspect ratio centered inside portrait container
-            )
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                // High-resolution video frame backdrop
+                AsyncImage(
+                    model = thumbnailUrl,
+                    contentDescription = "Video preview frame",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Android SurfaceView for hardware video playback when stream is available
+                if (!isVideoFailed) {
+                    AndroidView(
+                        factory = { ctx ->
+                            val frameLayout = FrameLayout(ctx).apply {
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                )
+                            }
+
+                            val surfaceView = SurfaceView(ctx).apply {
+                                layoutParams = FrameLayout.LayoutParams(
+                                    FrameLayout.LayoutParams.MATCH_PARENT,
+                                    FrameLayout.LayoutParams.MATCH_PARENT
+                                )
+                            }
+
+                            surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
+                                override fun surfaceCreated(holder: SurfaceHolder) {
+                                    try {
+                                        val player = MediaPlayer().apply {
+                                            setDisplay(holder)
+
+                                            // CRITICAL: Consume errors gracefully to prevent native crashes/aborts
+                                            setOnErrorListener { _, what, extra ->
+                                                Log.w(TAG, "MediaPlayer native code ($what, $extra) handled gracefully.")
+                                                isMediaPrepared = false
+                                                isVideoFailed = true
+                                                true // Returns true indicating the error is consumed
+                                            }
+
+                                            setOnInfoListener { _, _, _ -> true }
+
+                                            setDataSource(ctx, Uri.parse(videoStreamUrl))
+                                            isLooping = false
+
+                                            setOnPreparedListener { mp ->
+                                                try {
+                                                    isMediaPrepared = true
+                                                    isVideoFailed = false
+                                                    mp.seekTo(inTimestampMs.toInt())
+                                                    if (isPlaying) mp.start()
+                                                } catch (e: Exception) {
+                                                    Log.w(TAG, "Prepared listener warning: ${e.message}")
+                                                }
+                                            }
+                                            prepareAsync()
+                                        }
+                                        mediaPlayer = player
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "Surface creation initialization fallback: ${e.message}")
+                                        isVideoFailed = true
+                                    }
+                                }
+
+                                override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
+
+                                override fun surfaceDestroyed(holder: SurfaceHolder) {
+                                    try {
+                                        mediaPlayer?.apply {
+                                            if (isPlaying) stop()
+                                            reset()
+                                            release()
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "Surface destroy release cleanup: ${e.message}")
+                                    } finally {
+                                        mediaPlayer = null
+                                        isMediaPrepared = false
+                                    }
+                                }
+                            })
+
+                            frameLayout.addView(surfaceView)
+                            frameLayout
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                // Cinematic subtle scanline when playing
+                if (isPlaying) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(2.dp)
+                            .align(Alignment.TopCenter)
+                            .offset(y = (scanProgress * 180).dp)
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(
+                                        Color.Transparent,
+                                        CrimsonRedPrimary.copy(alpha = 0.6f),
+                                        NeonCyan.copy(alpha = 0.8f),
+                                        Color.Transparent
+                                    )
+                                )
+                            )
+                    )
+                }
+            }
 
             // Clickable layer to toggle play/pause
             Box(
@@ -362,10 +467,16 @@ fun VideoPlayerView(
     DisposableEffect(Unit) {
         onDispose {
             try {
-                mediaPlayer?.release()
-                mediaPlayer = null
+                mediaPlayer?.apply {
+                    if (isPlaying) stop()
+                    reset()
+                    release()
+                }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.w(TAG, "Cleanup exception: ${e.message}")
+            } finally {
+                mediaPlayer = null
+                isMediaPrepared = false
             }
         }
     }
