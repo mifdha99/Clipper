@@ -1,0 +1,6 @@
+{
+  "name": "TubeClip",
+  "description": "YouTube video clipper and editor for TikTok, Reels, and Shorts with AI video analysis and audio transcription.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
