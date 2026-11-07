@@ -440,13 +440,13 @@ class ClipEditorViewModel(application: Application) : AndroidViewModel(applicati
             _exportState.value = ExportUiState.Exporting(0.05f, "Menyiapkan pipeline trim...")
 
             try {
-                val exportResult = VideoExportEngine.trimAndExportVideo(
+                val exportResult = com.example.util.ClipExportHelper.export(
                     context = getApplication(),
-                    inputUriString = video.uriString,
+                    sourceUri = video.uriString,
                     startMs = inMs,
                     endMs = outMs,
-                    baseTitle = video.title,
-                    onProgress = { progress, task ->
+                    title = video.title,
+                    progress = { progress, task ->
                         _exportState.value = ExportUiState.Exporting(progress, task)
                     }
                 )

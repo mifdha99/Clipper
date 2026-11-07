@@ -1,5 +1,6 @@
 package com.example
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -9,9 +10,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.outlined.ContentCut
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.Icon
@@ -27,11 +30,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.screens.ClipperEditorScreen
+import com.example.ui.screens.DownloadsScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.theme.CrimsonRedPrimary
@@ -39,10 +44,12 @@ import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.TubeClipTheme
 import com.example.ui.viewmodel.ClipEditorViewModel
+import com.example.ui.viewmodel.DownloadViewModel
 import com.example.util.configureAppCheck
 
 enum class AppScreen(val title: String) {
     EXPLORE("Jelajahi"),
+    DOWNLOADS("Download"),
     EDITOR("Studio Klip"),
     LIBRARY("Koleksi")
 }
@@ -66,11 +73,13 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun TubeClipApp(
-    viewModel: ClipEditorViewModel = viewModel()
+    viewModel: ClipEditorViewModel = viewModel(),
+    downloadViewModel: DownloadViewModel = viewModel()
 ) {
     var currentScreen by remember { mutableStateOf(AppScreen.EXPLORE) }
+    val context = LocalContext.current
 
-    // Android back handler: if in Editor or Library, return to Explore
+    // Android back handler: if not in Explore, return to Explore
     BackHandler(enabled = currentScreen != AppScreen.EXPLORE) {
         currentScreen = AppScreen.EXPLORE
     }
@@ -105,6 +114,32 @@ fun TubeClipApp(
                         unselectedTextColor = Color(0xFF94A3B8)
                     ),
                     modifier = Modifier.testTag("nav_explore")
+                )
+
+                NavigationBarItem(
+                    selected = currentScreen == AppScreen.DOWNLOADS,
+                    onClick = { currentScreen = AppScreen.DOWNLOADS },
+                    icon = {
+                        Icon(
+                            imageVector = if (currentScreen == AppScreen.DOWNLOADS) Icons.Filled.FileDownload else Icons.Outlined.FileDownload,
+                            contentDescription = "Download"
+                        )
+                    },
+                    label = {
+                        Text(
+                            text = "Download",
+                            fontSize = 11.sp,
+                            fontWeight = if (currentScreen == AppScreen.DOWNLOADS) FontWeight.Bold else FontWeight.Normal
+                        )
+                    },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color.White,
+                        selectedTextColor = CrimsonRedPrimary,
+                        indicatorColor = CrimsonRedPrimary,
+                        unselectedIconColor = Color(0xFF94A3B8),
+                        unselectedTextColor = Color(0xFF94A3B8)
+                    ),
+                    modifier = Modifier.testTag("nav_downloads")
                 )
 
                 NavigationBarItem(
@@ -168,6 +203,22 @@ fun TubeClipApp(
                 HomeScreen(
                     viewModel = viewModel,
                     onNavigateToEditor = { currentScreen = AppScreen.EDITOR },
+                    onNavigateToDownloads = { currentScreen = AppScreen.DOWNLOADS },
+                    modifier = Modifier.padding(innerPadding)
+                )
+            }
+            AppScreen.DOWNLOADS -> {
+                DownloadsScreen(
+                    viewModel = downloadViewModel,
+                    onEditFile = { file ->
+                        val uri = Uri.fromFile(file)
+                        viewModel.importVideoFromUri(
+                            context = context,
+                            uri = uri,
+                            onSuccess = { currentScreen = AppScreen.EDITOR },
+                            onError = { /* ignored */ }
+                        )
+                    },
                     modifier = Modifier.padding(innerPadding)
                 )
             }

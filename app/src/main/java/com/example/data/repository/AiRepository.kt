@@ -218,12 +218,35 @@ class AiRepository {
             throw IllegalStateException("Model tidak menemukan highlight yang valid.")
         }
 
+        // Rank candidates using ViralMomentRanking
+        val candidates = highlightsList.map {
+            com.example.data.model.ViralMomentCandidate(
+                startMs = it.startSeconds * 1000L,
+                endMs = it.endSeconds * 1000L,
+                title = it.title,
+                hook = it.suggestedCaption,
+                reason = it.hookReason,
+                score = it.viralScore.coerceIn(0, 100)
+            )
+        }
+        val rankedCandidates = com.example.data.model.ViralMomentRanking.rank(candidates)
+        val finalHighlights = rankedCandidates.map { rc ->
+            VideoHighlight(
+                title = rc.title,
+                startSeconds = (rc.startMs / 1000).toInt(),
+                endSeconds = (rc.endMs / 1000).toInt(),
+                hookReason = rc.reason,
+                viralScore = rc.score,
+                suggestedCaption = rc.hook
+            )
+        }
+
         return VideoAnalysisResult(
             summary = summary,
             topics = if (topicsList.isNotEmpty()) topicsList else listOf("Video", "Highlight"),
             suggestedTitles = if (titlesList.isNotEmpty()) titlesList else listOf("Momen Menarik"),
             hashtags = if (hashtagsList.isNotEmpty()) hashtagsList else listOf("#reels", "#tiktok", "#viral"),
-            highlights = highlightsList,
+            highlights = finalHighlights,
             idealAspectRatio = idealAspectRatio,
             targetAudienceTip = targetAudienceTip
         )

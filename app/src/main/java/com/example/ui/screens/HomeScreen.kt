@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -82,6 +83,7 @@ import com.example.ui.viewmodel.ClipEditorViewModel
 fun HomeScreen(
     viewModel: ClipEditorViewModel,
     onNavigateToEditor: () -> Unit,
+    onNavigateToDownloads: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val deviceVideos by viewModel.deviceVideos.collectAsState()
@@ -205,25 +207,43 @@ fun HomeScreen(
 
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        Button(
-                            onClick = {
-                                pickVideoLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                                )
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = CrimsonRedPrimary,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(50.dp)
-                                .testTag("pick_video_from_storage_button")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(imageVector = Icons.Default.AddPhotoAlternate, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Buka Galeri HP & Pilih Video", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Button(
+                                onClick = {
+                                    pickVideoLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                                    )
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = CrimsonRedPrimary,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(50.dp)
+                                    .testTag("pick_video_from_storage_button")
+                            ) {
+                                Icon(imageVector = Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Galeri HP", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+
+                            FilledTonalButton(
+                                onClick = onNavigateToDownloads,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(50.dp)
+                                    .testTag("open_downloads_menu_button")
+                            ) {
+                                Icon(imageVector = Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Download URL", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
                         }
                     }
                 }
