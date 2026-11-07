@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
@@ -65,6 +70,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -97,6 +103,7 @@ fun ClipperEditorScreen(
     val outTimestampMs by viewModel.outTimestampMs.collectAsState()
     val currentPositionMs by viewModel.currentPositionMs.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
+    val selectedPreset by viewModel.selectedPreset.collectAsState()
 
     val selectedAspectRatio by viewModel.selectedAspectRatio.collectAsState()
     val blurredBgEnabled by viewModel.blurredBackgroundEnabled.collectAsState()
@@ -113,10 +120,28 @@ fun ClipperEditorScreen(
     val micAmplitude by viewModel.micAmplitude.collectAsState()
     val exportState by viewModel.exportState.collectAsState()
 
+    val context = LocalContext.current
     var activeTab by remember { mutableIntStateOf(0) }
     val tabTitles = listOf("AI Highlights", "Mic Subtitle", "Teks & Caption", "Format & Transisi")
 
     val scrollState = rememberScrollState()
+
+    val pickVideoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.importVideoFromUri(
+                context = context,
+                uri = uri,
+                onSuccess = {
+                    Toast.makeText(context, "Video baru berhasil dimuat!", Toast.LENGTH_SHORT).show()
+                },
+                onError = { err ->
+                    Toast.makeText(context, "Gagal memuat video: $err", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -124,7 +149,7 @@ fun ClipperEditorScreen(
                 title = {
                     Column {
                         Text(
-                            text = currentVideo.title,
+                            text = currentVideo?.title ?: "Pilih Video",
                             color = Color.White,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
@@ -132,7 +157,7 @@ fun ClipperEditorScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "${currentVideo.channel} • ${currentVideo.viewsCount}",
+                            text = "${currentVideo?.sourceDescription ?: "Lokal"} • ${currentVideo?.resolution ?: ""}",
                             color = Color(0xFF94A3B8),
                             fontSize = 11.sp
                         )
@@ -148,6 +173,20 @@ fun ClipperEditorScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            pickVideoLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                            )
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AddPhotoAlternate,
+                            contentDescription = "Ganti Video",
+                            tint = NeonCyan
+                        )
+                    }
+
                     Button(
                         onClick = { viewModel.exportCurrentClip() },
                         colors = ButtonDefaults.buttonColors(
@@ -157,7 +196,7 @@ fun ClipperEditorScreen(
                         shape = RoundedCornerShape(10.dp),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         modifier = Modifier
-                            .padding(end = 12.dp)
+                            .padding(end = 10.dp)
                             .testTag("export_clip_button")
                     ) {
                         Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -171,146 +210,181 @@ fun ClipperEditorScreen(
         containerColor = DarkBackground,
         modifier = modifier.fillMaxSize()
     ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .padding(innerPadding)
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-        ) {
-            // Interactive Video Canvas with overlay text & transitions
-            VideoPlayerView(
-                videoStreamUrl = currentVideo.videoStreamUrl,
-                thumbnailUrl = currentVideo.thumbnailUrl,
-                isPlaying = isPlaying,
-                currentPositionMs = currentPositionMs,
-                inTimestampMs = inTimestampMs,
-                outTimestampMs = outTimestampMs,
-                aspectRatioMode = selectedAspectRatio,
-                blurredBackgroundEnabled = blurredBgEnabled,
-                overlayText = overlayText,
-                captionStyle = captionStyle,
-                captionPosition = captionPosition,
-                captionSize = captionSize,
-                transitionEffect = selectedTransition,
-                speedMultiplier = speedMultiplier,
-                onPositionChanged = { viewModel.setCurrentPosition(it) },
-                onTogglePlayPause = { viewModel.togglePlayPause() }
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Precision Timeline Trimmer
-            TimelineTrimmer(
-                totalDurationSeconds = currentVideo.durationSeconds,
-                inTimestampMs = inTimestampMs,
-                outTimestampMs = outTimestampMs,
-                currentPositionMs = currentPositionMs,
-                onInChanged = { viewModel.setInTimestamp(it) },
-                onOutChanged = { viewModel.setOutTimestamp(it) },
-                onSeekPosition = { viewModel.setCurrentPosition(it) },
-                onAdjustIn = { viewModel.adjustInTimestamp(it) },
-                onAdjustOut = { viewModel.adjustOutTimestamp(it) }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Tab Navigation for Tools
-            ScrollableTabRow(
-                selectedTabIndex = activeTab,
-                containerColor = Color(0xFF141824),
-                contentColor = Color.White,
-                edgePadding = 8.dp,
-                indicator = { tabPositions ->
-                    TabRowDefaults.SecondaryIndicator(
-                        Modifier.tabIndicatorOffset(tabPositions[activeTab]),
-                        color = CrimsonRedPrimary
-                    )
-                },
+        if (currentVideo == null) {
+            Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .fillMaxWidth()
+                    .padding(innerPadding)
+                    .fillMaxSize(),
+                contentAlignment = Alignment.Center
             ) {
-                tabTitles.forEachIndexed { index, title ->
-                    Tab(
-                        selected = activeTab == index,
-                        onClick = { activeTab = index },
-                        text = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                when (index) {
-                                    0 -> Icon(Icons.Default.AutoAwesome, null, tint = if (activeTab == index) CrimsonRedPrimary else Color(0xFF94A3B8), modifier = Modifier.size(14.dp))
-                                    1 -> Icon(Icons.Default.Mic, null, tint = if (activeTab == index) NeonCyan else Color(0xFF94A3B8), modifier = Modifier.size(14.dp))
-                                    2 -> Icon(Icons.Default.TextFields, null, tint = if (activeTab == index) ViralYellow else Color(0xFF94A3B8), modifier = Modifier.size(14.dp))
-                                    3 -> Icon(Icons.Default.AspectRatio, null, tint = if (activeTab == index) CrimsonRedPrimary else Color(0xFF94A3B8), modifier = Modifier.size(14.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+                    Text(
+                        text = "Belum Ada Video yang Dipilih",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            pickVideoLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                            )
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CrimsonRedPrimary)
+                    ) {
+                        Text("Pilih Video dari HP")
+                    }
+                }
+            }
+        } else {
+            val video = currentVideo!!
+            Column(
+                modifier = Modifier
+                    .padding(innerPadding)
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                // Interactive Video Canvas with overlay text & transitions
+                VideoPlayerView(
+                    videoStreamUrl = video.uriString,
+                    thumbnailUrl = video.uriString,
+                    isPlaying = isPlaying,
+                    currentPositionMs = currentPositionMs,
+                    inTimestampMs = inTimestampMs,
+                    outTimestampMs = outTimestampMs,
+                    aspectRatioMode = selectedAspectRatio,
+                    blurredBackgroundEnabled = blurredBgEnabled,
+                    overlayText = overlayText,
+                    captionStyle = captionStyle,
+                    captionPosition = captionPosition,
+                    captionSize = captionSize,
+                    transitionEffect = selectedTransition,
+                    speedMultiplier = speedMultiplier,
+                    onPositionChanged = { viewModel.setCurrentPosition(it) },
+                    onTogglePlayPause = { viewModel.togglePlayPause() }
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Precision Timeline Trimmer with 15s/30s/45s/60s/Custom presets
+                TimelineTrimmer(
+                    totalDurationSeconds = video.durationSeconds,
+                    inTimestampMs = inTimestampMs,
+                    outTimestampMs = outTimestampMs,
+                    currentPositionMs = currentPositionMs,
+                    selectedPreset = selectedPreset,
+                    onPresetSelected = { viewModel.applyPreset(it) },
+                    onInChanged = { viewModel.setInTimestamp(it) },
+                    onOutChanged = { viewModel.setOutTimestamp(it) },
+                    onSeekPosition = { viewModel.setCurrentPosition(it) },
+                    onAdjustIn = { viewModel.adjustInTimestamp(it) },
+                    onAdjustOut = { viewModel.adjustOutTimestamp(it) },
+                    onPreviewClip = { viewModel.previewClip() },
+                    onSetInFromPlayhead = { viewModel.setInFromPlayhead() },
+                    onSetOutFromPlayhead = { viewModel.setOutFromPlayhead() }
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Tab Navigation for Tools
+                ScrollableTabRow(
+                    selectedTabIndex = activeTab,
+                    containerColor = Color(0xFF141824),
+                    contentColor = Color.White,
+                    edgePadding = 8.dp,
+                    indicator = { tabPositions ->
+                        TabRowDefaults.SecondaryIndicator(
+                            Modifier.tabIndicatorOffset(tabPositions[activeTab]),
+                            color = CrimsonRedPrimary
+                        )
+                    },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .fillMaxWidth()
+                ) {
+                    tabTitles.forEachIndexed { index, title ->
+                        Tab(
+                            selected = activeTab == index,
+                            onClick = { activeTab = index },
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    when (index) {
+                                        0 -> Icon(Icons.Default.AutoAwesome, null, tint = if (activeTab == index) CrimsonRedPrimary else Color(0xFF94A3B8), modifier = Modifier.size(14.dp))
+                                        1 -> Icon(Icons.Default.Mic, null, tint = if (activeTab == index) NeonCyan else Color(0xFF94A3B8), modifier = Modifier.size(14.dp))
+                                        2 -> Icon(Icons.Default.TextFields, null, tint = if (activeTab == index) ViralYellow else Color(0xFF94A3B8), modifier = Modifier.size(14.dp))
+                                        3 -> Icon(Icons.Default.AspectRatio, null, tint = if (activeTab == index) CrimsonRedPrimary else Color(0xFF94A3B8), modifier = Modifier.size(14.dp))
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = title,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (activeTab == index) FontWeight.Bold else FontWeight.Medium
+                                    )
                                 }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = title,
-                                    fontSize = 12.sp,
-                                    fontWeight = if (activeTab == index) FontWeight.Bold else FontWeight.Medium
-                                )
                             }
-                        }
-                    )
+                        )
+                    }
                 }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Active Tab Content
+                when (activeTab) {
+                    0 -> {
+                        // Real Gemini 4 Argon Video Analysis with Sampled Keyframes
+                        AiAnalysisSheet(
+                            state = aiAnalysisState,
+                            videoTitle = video.title,
+                            onRunAnalysis = { viewModel.runGemini4ArgonAnalysis() },
+                            onApplyHighlight = { viewModel.applyAiHighlight(it) }
+                        )
+                    }
+                    1 -> {
+                        // Speech Transcription with Gemini 3.5 Transcribe
+                        VoiceTranscribeSheet(
+                            state = transcriptionState,
+                            micAmplitude = micAmplitude,
+                            onStartRecording = { viewModel.startMicrophoneRecording() },
+                            onStopAndTranscribe = { viewModel.stopMicrophoneAndTranscribe() },
+                            onCancelRecording = { viewModel.cancelMicrophoneRecording() },
+                            onApplyCaption = { viewModel.applyTranscribedTextAsCaption(it) }
+                        )
+                    }
+                    2 -> {
+                        // Captions & Text Editing
+                        CaptionEditorControls(
+                            overlayText = overlayText,
+                            onOverlayTextChanged = { viewModel.setOverlayText(it) },
+                            captionStyle = captionStyle,
+                            onStyleChanged = { viewModel.setCaptionStyle(it) },
+                            captionPosition = captionPosition,
+                            onPositionChanged = { viewModel.setCaptionPosition(it) },
+                            captionSize = captionSize,
+                            onSizeChanged = { viewModel.setCaptionSize(it) }
+                        )
+                    }
+                    3 -> {
+                        // Format (Portrait 9:16 for TikTok/Reels) & Transitions
+                        FormatAndEffectsControls(
+                            selectedAspectRatio = selectedAspectRatio,
+                            onAspectRatioChanged = { viewModel.setAspectRatio(it) },
+                            blurredBackgroundEnabled = blurredBgEnabled,
+                            onToggleBlurredBackground = { viewModel.toggleBlurredBackground() },
+                            selectedTransition = selectedTransition,
+                            onTransitionChanged = { viewModel.setTransition(it) },
+                            speedMultiplier = speedMultiplier,
+                            onSpeedChanged = { viewModel.setSpeed(it) }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(32.dp))
             }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Active Tab Content
-            when (activeTab) {
-                0 -> {
-                    // Feature 1: "Analyze video content" with Gemini 4 Argon
-                    AiAnalysisSheet(
-                        state = aiAnalysisState,
-                        videoTitle = currentVideo.title,
-                        onRunAnalysis = { viewModel.runGemini4ArgonAnalysis() },
-                        onApplyHighlight = { viewModel.applyAiHighlight(it) }
-                    )
-                }
-                1 -> {
-                    // Feature 2: "Transcribe audio" with Gemini 3.5 Transcribe
-                    VoiceTranscribeSheet(
-                        state = transcriptionState,
-                        micAmplitude = micAmplitude,
-                        onStartRecording = { viewModel.startMicrophoneRecording() },
-                        onStopAndTranscribe = { viewModel.stopMicrophoneAndTranscribe() },
-                        onCancelRecording = { viewModel.cancelMicrophoneRecording() },
-                        onApplyCaption = { viewModel.applyTranscribedTextAsCaption(it) }
-                    )
-                }
-                2 -> {
-                    // Captions & Text Editing
-                    CaptionEditorControls(
-                        overlayText = overlayText,
-                        onOverlayTextChanged = { viewModel.setOverlayText(it) },
-                        captionStyle = captionStyle,
-                        onStyleChanged = { viewModel.setCaptionStyle(it) },
-                        captionPosition = captionPosition,
-                        onPositionChanged = { viewModel.setCaptionPosition(it) },
-                        captionSize = captionSize,
-                        onSizeChanged = { viewModel.setCaptionSize(it) }
-                    )
-                }
-                3 -> {
-                    // Format (Portrait 9:16 for TikTok/Reels) & Transitions
-                    FormatAndEffectsControls(
-                        selectedAspectRatio = selectedAspectRatio,
-                        onAspectRatioChanged = { viewModel.setAspectRatio(it) },
-                        blurredBackgroundEnabled = blurredBgEnabled,
-                        onToggleBlurredBackground = { viewModel.toggleBlurredBackground() },
-                        selectedTransition = selectedTransition,
-                        onTransitionChanged = { viewModel.setTransition(it) },
-                        speedMultiplier = speedMultiplier,
-                        onSpeedChanged = { viewModel.setSpeed(it) }
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
         }
 
-        // Export Dialog
+        // Export Modal with real file statistics and 4 actions
         ExportShareModal(
             state = exportState,
             onDismiss = { viewModel.resetExportState() }

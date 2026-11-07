@@ -1,6 +1,8 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,10 +11,14 @@ import com.example.data.model.TranscriptionResult
 import com.example.data.model.VideoAnalysisResult
 import com.example.data.model.VideoClipEntity
 import com.example.data.model.VideoHighlight
-import com.example.data.model.YouTubeVideo
+import com.example.data.model.VideoItem
 import com.example.data.repository.AiRepository
 import com.example.data.repository.VideoRepository
+import com.example.data.repository.YouTubeParseResult
+import com.example.ui.components.ClipDurationPreset
 import com.example.util.AudioRecorderHelper
+import com.example.util.VideoExportEngine
+import com.example.util.VideoMediaAnalyzer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -69,10 +75,19 @@ sealed interface TranscriptionUiState {
     data class Error(val message: String) : TranscriptionUiState
 }
 
+data class ExportSuccessInfo(
+    val fileName: String,
+    val durationMs: Long,
+    val resolution: String,
+    val fileSizeBytes: Long,
+    val filePath: String,
+    val contentUri: String
+)
+
 sealed interface ExportUiState {
     data object Idle : ExportUiState
     data class Exporting(val progress: Float, val currentTask: String) : ExportUiState
-    data class Success(val clip: VideoClipEntity) : ExportUiState
+    data class Success(val info: ExportSuccessInfo) : ExportUiState
     data class Error(val message: String) : ExportUiState
 }
 
@@ -83,17 +98,17 @@ class ClipEditorViewModel(application: Application) : AndroidViewModel(applicati
     private val aiRepository = AiRepository()
     private val audioRecorderHelper = AudioRecorderHelper(application)
 
-    // Curated videos for discovery
-    private val _curatedVideos = MutableStateFlow(videoRepository.getSampleVideos())
-    val curatedVideos: StateFlow<List<YouTubeVideo>> = _curatedVideos.asStateFlow()
-
     // Saved clips from Room DB
     val savedClips: StateFlow<List<VideoClipEntity>> = clipDao.getAllClips()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Currently active video in the clipper editor
-    private val _currentVideo = MutableStateFlow(videoRepository.getSampleVideos().first())
-    val currentVideo: StateFlow<YouTubeVideo> = _currentVideo.asStateFlow()
+    // Device local videos
+    private val _deviceVideos = MutableStateFlow<List<VideoItem>>(emptyList())
+    val deviceVideos: StateFlow<List<VideoItem>> = _deviceVideos.asStateFlow()
+
+    // Currently active video in editor
+    private val _currentVideo = MutableStateFlow<VideoItem?>(null)
+    val currentVideo: StateFlow<VideoItem?> = _currentVideo.asStateFlow()
 
     // Clipper Editor State
     private val _inTimestampMs = MutableStateFlow(0L)
@@ -108,6 +123,10 @@ class ClipEditorViewModel(application: Application) : AndroidViewModel(applicati
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
+    // Duration preset
+    private val _selectedPreset = MutableStateFlow(ClipDurationPreset.SEC_30)
+    val selectedPreset: StateFlow<ClipDurationPreset> = _selectedPreset.asStateFlow()
+
     // Aspect ratio & framing
     private val _selectedAspectRatio = MutableStateFlow(AspectRatioMode.PORTRAIT_9_16)
     val selectedAspectRatio: StateFlow<AspectRatioMode> = _selectedAspectRatio.asStateFlow()
@@ -116,7 +135,7 @@ class ClipEditorViewModel(application: Application) : AndroidViewModel(applicati
     val blurredBackgroundEnabled: StateFlow<Boolean> = _blurredBackgroundEnabled.asStateFlow()
 
     // Caption & Text Overlay
-    private val _overlayText = MutableStateFlow("POV: Bagian paling gila dari video ini! 😱")
+    private val _overlayText = MutableStateFlow("POV: Bagian paling viral dari video ini! 😱")
     val overlayText: StateFlow<String> = _overlayText.asStateFlow()
 
     private val _captionStyle = MutableStateFlow(CaptionStyle.VIRAL_YELLOW)
@@ -152,44 +171,92 @@ class ClipEditorViewModel(application: Application) : AndroidViewModel(applicati
     private var currentRecordedAudioFile: File? = null
     private var amplitudePollJob: Job? = null
 
-    fun selectVideo(video: YouTubeVideo) {
+    init {
+        loadDeviceVideos()
+    }
+
+    fun loadDeviceVideos() {
+        viewModelScope.launch {
+            val list = videoRepository.queryDeviceVideos(getApplication())
+            _deviceVideos.value = list
+            if (_currentVideo.value == null && list.isNotEmpty()) {
+                selectVideo(list.first())
+            }
+        }
+    }
+
+    fun importVideoFromUri(context: Context, uri: Uri, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val item = videoRepository.createVideoItemFromUri(context, uri)
+                selectVideo(item)
+                // Add to head of deviceVideos if not present
+                val current = _deviceVideos.value.toMutableList()
+                if (current.none { it.uriString == item.uriString }) {
+                    current.add(0, item)
+                    _deviceVideos.value = current
+                }
+                onSuccess()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to import video from uri: $uri", e)
+                onError(e.localizedMessage ?: "Gagal mengimpor file video.")
+            }
+        }
+    }
+
+    fun selectVideo(video: VideoItem) {
         _currentVideo.value = video
         _inTimestampMs.value = 0L
-        val maxDurationMs = video.durationSeconds * 1000L
+        val maxDurationMs = video.durationMs
         _outTimestampMs.value = minOf(30_000L, maxDurationMs)
         _currentPositionMs.value = 0L
         _isPlaying.value = false
+        _selectedPreset.value = ClipDurationPreset.SEC_30
         _aiAnalysisState.value = AiAnalysisUiState.Idle
         _transcriptionState.value = TranscriptionUiState.Idle
-        _overlayText.value = "POV: Momen terbaik di ${video.title} 🔥"
+        _overlayText.value = "POV: Momen terbaik di ${video.title.take(25)} 🔥"
     }
 
-    fun loadCustomYouTubeUrl(url: String): Boolean {
-        val parsed = videoRepository.parseYouTubeUrl(url) ?: return false
-        selectVideo(parsed)
-        return true
+    fun applyPreset(preset: ClipDurationPreset) {
+        _selectedPreset.value = preset
+        if (preset == ClipDurationPreset.CUSTOM) return
+        val currentIn = _inTimestampMs.value
+        val totalMs = _currentVideo.value?.durationMs ?: (preset.seconds * 1000L)
+        val targetDurationMs = preset.seconds * 1000L
+        val newOut = (currentIn + targetDurationMs).coerceAtMost(totalMs)
+        _outTimestampMs.value = newOut
     }
 
     fun setInTimestamp(ms: Long) {
-        val totalMs = _currentVideo.value.durationSeconds * 1000L
+        val totalMs = _currentVideo.value?.durationMs ?: 60_000L
         val clamped = ms.coerceIn(0L, totalMs - 1000L)
         if (clamped < _outTimestampMs.value) {
             _inTimestampMs.value = clamped
             if (_currentPositionMs.value < clamped) {
                 _currentPositionMs.value = clamped
             }
+            _selectedPreset.value = ClipDurationPreset.CUSTOM
         }
     }
 
     fun setOutTimestamp(ms: Long) {
-        val totalMs = _currentVideo.value.durationSeconds * 1000L
+        val totalMs = _currentVideo.value?.durationMs ?: 60_000L
         val clamped = ms.coerceIn(1000L, totalMs)
         if (clamped > _inTimestampMs.value) {
             _outTimestampMs.value = clamped
             if (_currentPositionMs.value > clamped) {
                 _currentPositionMs.value = clamped
             }
+            _selectedPreset.value = ClipDurationPreset.CUSTOM
         }
+    }
+
+    fun setInFromPlayhead() {
+        setInTimestamp(_currentPositionMs.value)
+    }
+
+    fun setOutFromPlayhead() {
+        setOutTimestamp(_currentPositionMs.value)
     }
 
     fun adjustInTimestamp(deltaMs: Long) {
@@ -201,8 +268,13 @@ class ClipEditorViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setCurrentPosition(ms: Long) {
-        val totalMs = _currentVideo.value.durationSeconds * 1000L
+        val totalMs = _currentVideo.value?.durationMs ?: 60_000L
         _currentPositionMs.value = ms.coerceIn(0L, totalMs)
+    }
+
+    fun previewClip() {
+        _currentPositionMs.value = _inTimestampMs.value
+        _isPlaying.value = true
     }
 
     fun togglePlayPause() {
@@ -241,7 +313,6 @@ class ClipEditorViewModel(application: Application) : AndroidViewModel(applicati
         _speedMultiplier.value = speed
     }
 
-    // Apply an AI Highlight to timeline
     fun applyAiHighlight(highlight: VideoHighlight) {
         val startMs = highlight.startSeconds * 1000L
         val endMs = highlight.endSeconds * 1000L
@@ -249,19 +320,29 @@ class ClipEditorViewModel(application: Application) : AndroidViewModel(applicati
         _outTimestampMs.value = endMs
         _currentPositionMs.value = startMs
         _overlayText.value = highlight.suggestedCaption
+        _selectedPreset.value = ClipDurationPreset.CUSTOM
     }
 
-    // 1. Feature: "Analyze video content" with Gemini 4 Argon
+    // Real AI Video Analysis with sampled keyframes passed to Gemini 4 Argon
     fun runGemini4ArgonAnalysis() {
-        val video = _currentVideo.value
+        val video = _currentVideo.value ?: return
         viewModelScope.launch {
             _aiAnalysisState.value = AiAnalysisUiState.Loading
             try {
+                // Sample 4 genuine keyframes from video
+                val keyframes = VideoMediaAnalyzer.sampleVideoKeyframes(
+                    context = getApplication(),
+                    videoUriString = video.uriString,
+                    sampleCount = 4,
+                    maxDurationMs = video.durationMs
+                )
+
                 val result = aiRepository.analyzeVideoContent(
                     videoTitle = video.title,
-                    channelName = video.channel,
+                    channelName = video.sourceDescription,
                     videoDurationSeconds = video.durationSeconds,
-                    descriptionOrContext = video.description
+                    descriptionOrContext = "Video durasi ${video.durationSeconds}s, resolusi ${video.resolution}",
+                    keyframes = keyframes
                 )
                 _aiAnalysisState.value = AiAnalysisUiState.Success(result)
             } catch (e: CancellationException) {
@@ -275,7 +356,7 @@ class ClipEditorViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // 2. Feature: "Transcribe audio" with Gemini 3.5 Transcribe
+    // Audio Transcription with Gemini 3.5 Transcribe
     fun startMicrophoneRecording() {
         val file = audioRecorderHelper.startRecording()
         if (file != null) {
@@ -300,7 +381,7 @@ class ClipEditorViewModel(application: Application) : AndroidViewModel(applicati
             try {
                 val result = aiRepository.transcribeAudio(
                     audioFile = file,
-                    contextPrompt = "YouTube clipper voiceover for ${_currentVideo.value.title}"
+                    contextPrompt = "Voiceover komentar video untuk ${_currentVideo.value?.title ?: "Klip"}"
                 )
                 _transcriptionState.value = TranscriptionUiState.Success(result)
             } catch (e: CancellationException) {
@@ -342,44 +423,74 @@ class ClipEditorViewModel(application: Application) : AndroidViewModel(applicati
         _micAmplitude.value = 0
     }
 
-    // Export & Save Clip
+    // REAL Hardware MP4 Trimming & MediaStore Export (Movies/Clipper)
     fun exportCurrentClip(customTitle: String? = null) {
+        val video = _currentVideo.value
+        if (video == null) {
+            _exportState.value = ExportUiState.Error("Tidak ada video yang dipilih.")
+            return
+        }
+
         viewModelScope.launch {
-            val video = _currentVideo.value
             val inMs = _inTimestampMs.value
             val outMs = _outTimestampMs.value
             val durationMs = (outMs - inMs).coerceAtLeast(1000L)
-            val title = customTitle ?: "Clip: ${video.title.take(30)}..."
+            val title = customTitle ?: "Clip: ${video.title.take(24)}"
 
-            _exportState.value = ExportUiState.Exporting(0.1f, "Menyiapkan timeline video...")
-            delay(400)
-            _exportState.value = ExportUiState.Exporting(0.35f, "Memproses format portrait 9:16 untuk TikTok/Reels...")
-            delay(500)
-            _exportState.value = ExportUiState.Exporting(0.65f, "Menerapkan teks overlay & transisi...")
-            delay(500)
-            _exportState.value = ExportUiState.Exporting(0.9f, "Menyimpan ke memori perangkat...")
-            delay(400)
+            _exportState.value = ExportUiState.Exporting(0.05f, "Menyiapkan pipeline trim...")
 
-            val newClip = VideoClipEntity(
-                id = UUID.randomUUID().toString(),
-                title = title,
-                sourceVideoTitle = video.title,
-                sourceVideoUrl = "https://youtube.com/watch?v=${video.id}",
-                sourceThumbnailUrl = video.thumbnailUrl,
-                inTimestampMs = inMs,
-                outTimestampMs = outMs,
-                durationMs = durationMs,
-                aspectRatio = _selectedAspectRatio.value.label,
-                overlayText = _overlayText.value,
-                overlayStyle = _captionStyle.value.label,
-                transitionEffect = _selectedTransition.value.label,
-                speedMultiplier = _speedMultiplier.value,
-                createdAt = System.currentTimeMillis(),
-                tags = "tiktok,reels,shorts,viral"
-            )
+            try {
+                val exportResult = VideoExportEngine.trimAndExportVideo(
+                    context = getApplication(),
+                    inputUriString = video.uriString,
+                    startMs = inMs,
+                    endMs = outMs,
+                    baseTitle = video.title,
+                    onProgress = { progress, task ->
+                        _exportState.value = ExportUiState.Exporting(progress, task)
+                    }
+                )
 
-            clipDao.insertClip(newClip)
-            _exportState.value = ExportUiState.Success(newClip)
+                val newClip = VideoClipEntity(
+                    id = UUID.randomUUID().toString(),
+                    title = title,
+                    sourceVideoTitle = video.title,
+                    sourceVideoUrl = video.uriString,
+                    sourceThumbnailUrl = video.uriString,
+                    inTimestampMs = inMs,
+                    outTimestampMs = outMs,
+                    durationMs = durationMs,
+                    aspectRatio = _selectedAspectRatio.value.label,
+                    overlayText = _overlayText.value,
+                    overlayStyle = _captionStyle.value.label,
+                    transitionEffect = _selectedTransition.value.label,
+                    speedMultiplier = _speedMultiplier.value,
+                    createdAt = System.currentTimeMillis(),
+                    tags = "tiktok,reels,shorts,viral",
+                    outputFilePath = exportResult.outputFilePath,
+                    outputContentUri = exportResult.outputContentUri,
+                    fileSizeBytes = exportResult.fileSizeBytes,
+                    resolution = exportResult.resolution
+                )
+
+                clipDao.insertClip(newClip)
+
+                val successInfo = ExportSuccessInfo(
+                    fileName = exportResult.fileName,
+                    durationMs = exportResult.durationMs,
+                    resolution = exportResult.resolution,
+                    fileSizeBytes = exportResult.fileSizeBytes,
+                    filePath = exportResult.outputFilePath,
+                    contentUri = exportResult.outputContentUri
+                )
+
+                _exportState.value = ExportUiState.Success(successInfo)
+            } catch (e: Exception) {
+                Log.e(TAG, "Video export failed", e)
+                _exportState.value = ExportUiState.Error(
+                    "Gagal mengekspor video: ${e.localizedMessage ?: "Format tidak didukung atau memori tidak mencukupi"}"
+                )
+            }
         }
     }
 
@@ -390,6 +501,15 @@ class ClipEditorViewModel(application: Application) : AndroidViewModel(applicati
     fun deleteSavedClip(clip: VideoClipEntity) {
         viewModelScope.launch {
             clipDao.deleteClip(clip)
+            // Attempt deleting disk file if path exists
+            if (clip.outputFilePath.isNotBlank()) {
+                try {
+                    val file = File(clip.outputFilePath)
+                    if (file.exists()) file.delete()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not delete cached clip file", e)
+                }
+            }
         }
     }
 

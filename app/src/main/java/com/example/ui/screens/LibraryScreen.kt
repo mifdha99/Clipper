@@ -2,8 +2,11 @@ package com.example.ui.screens
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +28,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,6 +60,7 @@ import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.ViralYellow
 import com.example.ui.viewmodel.ClipEditorViewModel
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -64,7 +69,6 @@ import java.util.Locale
 @Composable
 fun LibraryScreen(
     viewModel: ClipEditorViewModel,
-    onClipClick: (VideoClipEntity) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val savedClips by viewModel.savedClips.collectAsState()
@@ -124,7 +128,7 @@ fun LibraryScreen(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = "Pilih video YouTube favorit Anda, potong segmen viral, dan ekspor ke format portrait TikTok/Reels.",
+                        text = "Pilih video dari galeri HP, potong segmen viral, dan ekspor ke galeri HP (Movies/Clipper).",
                         color = Color(0xFF94A3B8),
                         fontSize = 13.sp,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -142,6 +146,7 @@ fun LibraryScreen(
                 items(savedClips, key = { it.id }) { clip ->
                     SavedClipCard(
                         clip = clip,
+                        onPlay = { playClip(context, clip) },
                         onShare = { shareClip(context, clip) },
                         onDelete = { viewModel.deleteSavedClip(clip) }
                     )
@@ -154,9 +159,12 @@ fun LibraryScreen(
 @Composable
 fun SavedClipCard(
     clip: VideoClipEntity,
+    onPlay: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val fileExists = clip.outputFilePath.isNotBlank() && File(clip.outputFilePath).exists()
+
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFF141824)),
         shape = RoundedCornerShape(16.dp),
@@ -175,13 +183,31 @@ fun SavedClipCard(
                 modifier = Modifier
                     .size(90.dp)
                     .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF0F121B))
+                    .clickable(onClick = onPlay),
+                contentAlignment = Alignment.Center
             ) {
                 AsyncImage(
-                    model = clip.sourceThumbnailUrl,
+                    model = clip.outputContentUri.ifBlank { clip.sourceThumbnailUrl },
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
+
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .background(Color.Black.copy(alpha = 0.65f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Putar",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
                 Surface(
                     color = Color.Black.copy(alpha = 0.75f),
                     shape = RoundedCornerShape(4.dp),
@@ -213,22 +239,29 @@ fun SavedClipCard(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = clip.sourceVideoTitle,
-                    color = Color(0xFF94A3B8),
+                    text = "${clip.resolution} • ${clip.aspectRatio}",
+                    color = NeonCyan,
                     fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    fontWeight = FontWeight.SemiBold
                 )
+                if (clip.fileSizeBytes > 0L) {
+                    val mb = clip.fileSizeBytes / (1024f * 1024f)
+                    Text(
+                        text = "Ukuran: ${"%.1f".format(mb)} MB",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 10.sp
+                    )
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(
-                        color = CrimsonRedPrimary.copy(alpha = 0.2f),
+                        color = if (fileExists) Color(0xFF0F382E) else Color(0xFF38151B),
                         shape = RoundedCornerShape(4.dp)
                     ) {
                         Text(
-                            text = clip.aspectRatio,
-                            color = CrimsonRedPrimary,
-                            fontSize = 10.sp,
+                            text = if (fileExists) "Movies/Clipper" else "File Asli Dihapus",
+                            color = if (fileExists) Color(0xFF4ADE80) else Color(0xFFF87171),
+                            fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                         )
@@ -262,14 +295,57 @@ fun SavedClipCard(
     }
 }
 
-private fun shareClip(context: Context, clip: VideoClipEntity) {
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_SUBJECT, clip.title)
-        putExtra(
-            Intent.EXTRA_TEXT,
-            "${clip.title}\n\nKlip dipotong dengan TubeClip (${clip.aspectRatio})\n${clip.sourceVideoUrl}\n#${clip.tags.replace(",", " #")}"
-        )
+private fun playClip(context: Context, clip: VideoClipEntity) {
+    try {
+        val targetUri = if (clip.outputContentUri.isNotBlank()) {
+            Uri.parse(clip.outputContentUri)
+        } else if (clip.outputFilePath.isNotBlank()) {
+            Uri.fromFile(File(clip.outputFilePath))
+        } else {
+            Uri.parse(clip.sourceVideoUrl)
+        }
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(targetUri, "video/mp4")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        Toast.makeText(context, "Tidak ada aplikasi video player: ${e.message}", Toast.LENGTH_SHORT).show()
     }
-    context.startActivity(Intent.createChooser(intent, "Bagikan Klip Video Ke:"))
+}
+
+private fun shareClip(context: Context, clip: VideoClipEntity) {
+    try {
+        val targetUri = if (clip.outputContentUri.isNotBlank()) {
+            Uri.parse(clip.outputContentUri)
+        } else if (clip.outputFilePath.isNotBlank()) {
+            Uri.fromFile(File(clip.outputFilePath))
+        } else null
+
+        val intent = if (targetUri != null) {
+            Intent(Intent.ACTION_SEND).apply {
+                type = "video/mp4"
+                putExtra(Intent.EXTRA_STREAM, targetUri)
+                putExtra(Intent.EXTRA_SUBJECT, clip.title)
+                putExtra(
+                    Intent.EXTRA_TEXT,
+                    "${clip.title}\n\nKlip video dibuat dengan Clipper AI (${clip.aspectRatio}) #Clipper #Viral #Reels #TikTok"
+                )
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        } else {
+            Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, clip.title)
+                putExtra(
+                    Intent.EXTRA_TEXT,
+                    "${clip.title}\n\nKlip video dibuat dengan Clipper AI (${clip.aspectRatio})"
+                )
+            }
+        }
+        context.startActivity(Intent.createChooser(intent, "Bagikan Klip Video Ke:"))
+    } catch (e: Exception) {
+        Toast.makeText(context, "Gagal membagikan klip: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
 }

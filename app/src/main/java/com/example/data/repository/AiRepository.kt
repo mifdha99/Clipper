@@ -1,11 +1,17 @@
 package com.example.data.repository
 
+import android.graphics.Bitmap
 import android.util.Log
 import com.example.data.model.TranscriptionResult
 import com.example.data.model.VideoAnalysisResult
 import com.example.data.model.VideoHighlight
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
+import com.google.firebase.ai.type.Content
+import com.google.firebase.ai.type.ImagePart
+import com.google.firebase.ai.type.InlineDataPart
+import com.google.firebase.ai.type.Part
+import com.google.firebase.ai.type.TextPart
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,7 +23,7 @@ import java.io.File
 private const val TAG = "AiRepository"
 
 class AiRepository {
-    // 1. Mandatory model gemini-4-argon for deep video understanding and key information analysis
+    // 1. Mandatory model gemini-4-argon for deep video understanding and keyframe multimodal analysis
     private val argonModel by lazy {
         Firebase.ai.generativeModel(
             modelName = "gemini-4-argon"
@@ -33,135 +39,125 @@ class AiRepository {
 
     /**
      * Analyzes video content, key timestamps, viral hooks, and social metadata
-     * using Gemini 4 Argon.
+     * using Gemini 4 Argon with genuine sampled keyframes whenever available.
+     * Throws real exceptions on failure without fabricating mock responses.
      */
     suspend fun analyzeVideoContent(
         videoTitle: String,
         channelName: String,
         videoDurationSeconds: Int,
-        descriptionOrContext: String
+        descriptionOrContext: String,
+        keyframes: List<Bitmap> = emptyList()
     ): VideoAnalysisResult = withContext(Dispatchers.IO) {
-        val prompt = """
-            You are an expert social media video editor and viral content strategist.
-            Analyze this YouTube video to discover the best viral clips for TikTok, Instagram Reels, and YouTube Shorts:
+        val promptText = """
+            You are an expert social media video editor and viral content strategist analyzing a video for clipping into portrait TikTok / Instagram Reels / YouTube Shorts.
+            
             Video Title: "$videoTitle"
-            Channel: "$channelName"
+            Source / Context: "$channelName - $descriptionOrContext"
             Total Video Duration: $videoDurationSeconds seconds
-            Context / Description / Topic: "$descriptionOrContext"
-
-            Provide comprehensive video understanding and extract key highlight moments with timestamps.
-            Return ONLY a raw valid JSON object with no markdown wrapping and no explanation:
+            Sampled visual keyframe frames attached: ${keyframes.size} frames.
+            
+            INSTRUCTIONS:
+            1. Thoroughly evaluate the visual frames and content context.
+            2. Identify genuine compelling moments with timestamps STRICTLY between 0 and $videoDurationSeconds seconds.
+            3. Highlight points with high viral potential (humor, surprise, emotional shift, key dialogue, climax).
+            4. Do NOT fabricate timestamps beyond $videoDurationSeconds seconds.
+            
+            Return ONLY raw valid JSON (no markdown formatting, no code blocks):
             {
-              "summary": "2-sentence compelling summary of the video content",
+              "summary": "Compelling 2-sentence summary based on real visual and topic content",
               "topics": ["topic1", "topic2", "topic3"],
-              "suggestedTitles": ["Catchy Title 1 for TikTok", "Viral Question Title 2", "Punchy Title 3"],
-              "hashtags": ["#fyp", "#viral", "#youtubeclip", "#reels", "#trending"],
+              "suggestedTitles": ["Viral Title 1", "Catchy Hook Title 2", "Punchy Title 3"],
+              "hashtags": ["#viral", "#reels", "#fyp", "#shorts", "#clipper"],
               "idealAspectRatio": "9:16",
-              "targetAudienceTip": "Key advice on hook timing and audience engagement",
+              "targetAudienceTip": "Strategic advice for viewer retention",
               "highlights": [
                 {
-                  "title": "Highlight 1: Catchy Hook or Punchline",
-                  "startSeconds": 15,
-                  "endSeconds": 45,
-                  "hookReason": "Why this segment has high viewer retention",
+                  "title": "Highlight 1: Catchy Opening Hook",
+                  "startSeconds": 0,
+                  "endSeconds": 30,
+                  "hookReason": "Why this moment retains viewers in first 3 seconds",
                   "viralScore": 95,
-                  "suggestedCaption": "WAIT FOR THE END! 😱"
-                },
-                {
-                  "title": "Highlight 2: Key Insight / Climax",
-                  "startSeconds": 75,
-                  "endSeconds": 120,
-                  "hookReason": "Emotional reaction or unexpected turn",
-                  "viralScore": 92,
-                  "suggestedCaption": "You won't believe what happened next..."
-                },
-                {
-                  "title": "Highlight 3: High Energy Moment",
-                  "startSeconds": 140,
-                  "endSeconds": 185,
-                  "hookReason": "Direct call to action or humor",
-                  "viralScore": 88,
-                  "suggestedCaption": "The truth about this is insane! 🔥"
+                  "suggestedCaption": "WAIT FOR THIS! 😱"
                 }
               ]
             }
         """.trimIndent()
 
+        val parts = mutableListOf<Part>()
+        for (bitmap in keyframes) {
+            parts.add(ImagePart(bitmap))
+        }
+        parts.add(TextPart(promptText))
+
+        val content = Content(role = "user", parts = parts)
+
         try {
             val response = withTimeout(60_000L) {
-                argonModel.generateContent(prompt)
+                argonModel.generateContent(content)
             }
-            val responseText = response.text ?: throw IllegalStateException("Model returned empty text.")
+            val responseText = response.text ?: throw IllegalStateException("Gemini 4 Argon mengembalikan respon kosong.")
             Log.d(TAG, "Argon video analysis response: $responseText")
             parseVideoAnalysisJson(responseText, videoDurationSeconds)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed video analysis with gemini-4-argon", e)
-            // Provide a high quality structured fallback based on input so user workflow never breaks
-            buildFallbackVideoAnalysis(videoTitle, videoDurationSeconds)
+            throw IllegalStateException("Analisis AI dengan Gemini 4 Argon gagal: ${e.message ?: "Koneksi atau model tidak tersedia."}", e)
         }
     }
 
     /**
-     * Transcribes recorded audio from the user's microphone using gemini-3.5-transcribe.
+     * Transcribes recorded audio from the user's microphone or video track using gemini-3.5-transcribe.
      */
     suspend fun transcribeAudio(
         audioFile: File,
         contextPrompt: String? = null
     ): TranscriptionResult = withContext(Dispatchers.IO) {
+        if (!audioFile.exists() || audioFile.length() == 0L) {
+            throw IllegalArgumentException("File audio tidak ditemukan atau kosong (${audioFile.absolutePath})")
+        }
+
         try {
             val audioBytes = audioFile.readBytes()
             Log.d(TAG, "Audio file size: ${audioBytes.size} bytes from ${audioFile.name}")
 
-            val parts = mutableListOf<com.google.firebase.ai.type.Part>()
-            if (audioBytes.isNotEmpty()) {
-                parts.add(com.google.firebase.ai.type.InlineDataPart(audioBytes, "audio/mp4"))
-            }
+            val parts = mutableListOf<Part>()
+            parts.add(InlineDataPart(audioBytes, "audio/mp4"))
             parts.add(
-                com.google.firebase.ai.type.TextPart(
+                TextPart(
                     """
                     You are an ultra-fast speech-to-text transcriber for social video clips.
                     Transcribe all spoken words in this audio recording cleanly and accurately.
-                    Context / video topic: "${contextPrompt ?: "YouTube video voiceover commentary"}"
+                    Context: "${contextPrompt ?: "Video voiceover commentary"}"
                     
-                    Return ONLY a raw valid JSON object with:
+                    Return ONLY raw valid JSON:
                     {
                       "transcriptText": "the full transcribed text",
-                      "languageDetected": "Indonesian / English / auto",
+                      "languageDetected": "id",
                       "confidenceScore": 0.98,
                       "formattedCaptions": [
                         "First short subtitle line",
-                        "Second short subtitle line",
-                        "Third punchy line"
+                        "Second short subtitle line"
                       ]
                     }
                     """.trimIndent()
                 )
             )
-            val requestContent = com.google.firebase.ai.type.Content(role = "user", parts = parts)
+            val requestContent = Content(role = "user", parts = parts)
 
             val response = withTimeout(60_000L) {
                 transcribeModel.generateContent(requestContent)
             }
 
-            val responseText = response.text ?: throw IllegalStateException("Model returned empty transcription.")
+            val responseText = response.text ?: throw IllegalStateException("Gemini 3.5 Transcribe mengembalikan respon kosong.")
             Log.d(TAG, "gemini-3.5-transcribe response: $responseText")
             parseTranscriptionJson(responseText)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed audio transcription with gemini-3.5-transcribe", e)
-            TranscriptionResult(
-                transcriptText = "Audio berhasil direkam. Klip ini sangat menarik untuk dibagikan ke TikTok dan Instagram Reels!",
-                languageDetected = "id",
-                confidenceScore = 0.95f,
-                formattedCaptions = listOf(
-                    "Audio berhasil direkam!",
-                    "Klip ini siap dibagikan",
-                    "ke TikTok & Reels!"
-                )
-            )
+            throw IllegalStateException("Transkripsi suara dengan Gemini 3.5 Transcribe gagal: ${e.message ?: "Model tidak merespon."}", e)
         }
     }
 
@@ -171,7 +167,7 @@ class AiRepository {
 
         val summary = json.optString("summary", "Analisis video selesai.")
         val idealAspectRatio = json.optString("idealAspectRatio", "9:16")
-        val targetAudienceTip = json.optString("targetAudienceTip", "Gunakan transisi dinamis dan caption tebal untuk retensi penonton.")
+        val targetAudienceTip = json.optString("targetAudienceTip", "Gunakan teks tebal berwarna kontras dan transisi dinamis.")
 
         val topicsList = mutableListOf<String>()
         val topicsArr = json.optJSONArray("topics")
@@ -202,15 +198,15 @@ class AiRepository {
         if (highlightsArr != null) {
             for (i in 0 until highlightsArr.length()) {
                 val hObj = highlightsArr.getJSONObject(i)
-                val start = hObj.optInt("startSeconds", 0).coerceAtLeast(0)
+                val start = hObj.optInt("startSeconds", 0).coerceIn(0, totalDuration.coerceAtLeast(1))
                 val rawEnd = hObj.optInt("endSeconds", start + 30)
-                val end = if (totalDuration > 0) rawEnd.coerceAtMost(totalDuration) else rawEnd
+                val end = if (totalDuration > 0) rawEnd.coerceIn(start + 1, totalDuration) else rawEnd
                 highlightsList.add(
                     VideoHighlight(
                         title = hObj.optString("title", "Highlight ${i + 1}"),
                         startSeconds = start,
-                        endSeconds = if (end > start) end else start + 30,
-                        hookReason = hObj.optString("hookReason", "Momen viral dengan retensi tinggi"),
+                        endSeconds = if (end > start) end else (start + 15).coerceAtMost(totalDuration),
+                        hookReason = hObj.optString("hookReason", "Momen penting dalam video"),
                         viralScore = hObj.optInt("viralScore", 90),
                         suggestedCaption = hObj.optString("suggestedCaption", "Tonton sampai habis!")
                     )
@@ -218,15 +214,16 @@ class AiRepository {
             }
         }
 
+        if (highlightsList.isEmpty()) {
+            throw IllegalStateException("Model tidak menemukan highlight yang valid.")
+        }
+
         return VideoAnalysisResult(
             summary = summary,
-            topics = if (topicsList.isNotEmpty()) topicsList else listOf("Viral", "Clipper", "Trending"),
-            suggestedTitles = if (titlesList.isNotEmpty()) titlesList else listOf("Momen Terbaik!", "Jangan Sampai Terlewat"),
-            hashtags = if (hashtagsList.isNotEmpty()) hashtagsList else listOf("#fyp", "#viral", "#reels", "#tiktok"),
-            highlights = if (highlightsList.isNotEmpty()) highlightsList else listOf(
-                VideoHighlight("Momen Pembuka & Hook", 10, 40, "Hook kuat di 3 detik pertama", 95, "BAGIAN PALING SERU! 🔥"),
-                VideoHighlight("Puncak Reaksi", 60, 95, "Klimaks dan kejutan video", 91, "Gak nyangka bakal begini 😱")
-            ),
+            topics = if (topicsList.isNotEmpty()) topicsList else listOf("Video", "Highlight"),
+            suggestedTitles = if (titlesList.isNotEmpty()) titlesList else listOf("Momen Menarik"),
+            hashtags = if (hashtagsList.isNotEmpty()) hashtagsList else listOf("#reels", "#tiktok", "#viral"),
+            highlights = highlightsList,
             idealAspectRatio = idealAspectRatio,
             targetAudienceTip = targetAudienceTip
         )
@@ -246,7 +243,6 @@ class AiRepository {
                 captions.add(capArr.getString(i))
             }
         } else {
-            // Split transcript by sentences
             transcript.split(". ").forEach {
                 if (it.isNotBlank()) captions.add(it.trim())
             }
@@ -271,43 +267,5 @@ class AiRepository {
             clean = clean.substring(0, clean.length - 3)
         }
         return clean.trim()
-    }
-
-    private fun buildFallbackVideoAnalysis(title: String, duration: Int): VideoAnalysisResult {
-        val dur = if (duration <= 0) 180 else duration
-        val h1End = (dur * 0.25).toInt().coerceIn(15, 60)
-        val h2Start = (dur * 0.4).toInt()
-        val h2End = (h2Start + 35).coerceAtMost(dur)
-
-        return VideoAnalysisResult(
-            summary = "Video '$title' memiliki beberapa segmen dengan potensi viralitas tinggi untuk format portrait TikTok & Reels.",
-            topics = listOf("YouTube Highlight", "Trending", "Viral Moment"),
-            suggestedTitles = listOf(
-                "Momen Gila di $title! 🤯",
-                "Bagian Terbaik yang Harus Kamu Lihat",
-                "POV: Nonton $title Tanpa Skip"
-            ),
-            hashtags = listOf("#fyp", "#viral", "#reels", "#tiktok", "#shorts", "#tubeclip"),
-            highlights = listOf(
-                VideoHighlight(
-                    title = "Viral Hook (0:05 - ${h1End}s)",
-                    startSeconds = 5,
-                    endSeconds = h1End,
-                    hookReason = "3 detik pertama langsung menarik rasa penasaran penonton",
-                    viralScore = 96,
-                    suggestedCaption = "TONTON SAMPAI SELESAI! 💥"
-                ),
-                VideoHighlight(
-                    title = "Klimaks & Reaksi Kunci",
-                    startSeconds = h2Start,
-                    endSeconds = h2End,
-                    hookReason = "Intensitas cerita memuncak dan sangat cocok dijadikan Reels",
-                    viralScore = 92,
-                    suggestedCaption = "Ini alasan kenapa harus nonton 😱"
-                )
-            ),
-            idealAspectRatio = "9:16",
-            targetAudienceTip = "Gunakan teks tebal berwarna kuning di tengah layar untuk menarik perhatian pengguna saat scrolling cepat."
-        )
     }
 }

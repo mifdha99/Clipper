@@ -2,11 +2,10 @@ package com.example.ui.components
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,40 +22,36 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.example.data.model.VideoClipEntity
 import com.example.ui.theme.CrimsonRedPrimary
 import com.example.ui.theme.NeonCyan
-import com.example.ui.theme.ReelsPurple
-import com.example.ui.theme.TikTokBlack
-import com.example.ui.theme.ViralYellow
-import com.example.ui.theme.YouTubeRed
+import com.example.ui.viewmodel.ExportSuccessInfo
 import com.example.ui.viewmodel.ExportUiState
 
 @Composable
@@ -87,7 +82,11 @@ fun ExportShareModal(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (state is ExportUiState.Success) "Ekspor Selesai! 🎉" else "Mengekspor Klip Video",
+                        text = when (state) {
+                            is ExportUiState.Success -> "Export Berhasil! 🎉"
+                            is ExportUiState.Error -> "Gagal Ekspor Video"
+                            else -> "Merender MP4..."
+                        },
                         color = Color.White,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold
@@ -101,21 +100,21 @@ fun ExportShareModal(
 
                 when (state) {
                     is ExportUiState.Exporting -> {
-                        // Processing state
                         Box(
                             modifier = Modifier
-                                .size(64.dp)
+                                .size(68.dp)
                                 .background(Color(0xFF1B2133), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
                             CircularProgressIndicator(
                                 progress = { state.progress },
                                 color = CrimsonRedPrimary,
-                                modifier = Modifier.size(52.dp)
+                                strokeWidth = 5.dp,
+                                modifier = Modifier.size(54.dp)
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
 
                         Text(
                             text = "${(state.progress * 100).toInt()}%",
@@ -147,9 +146,8 @@ fun ExportShareModal(
                     }
 
                     is ExportUiState.Success -> {
-                        val clip = state.clip
+                        val info = state.info
 
-                        // Celebration card
                         Box(
                             modifier = Modifier
                                 .size(56.dp)
@@ -167,110 +165,127 @@ fun ExportShareModal(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         Text(
-                            text = clip.title,
+                            text = "Video Tersimpan di Galeri HP",
                             color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center
-                        )
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Surface(
-                            color = Color(0xFF1F263B),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text(
-                                text = "Format: ${clip.aspectRatio} | Durasi: ${(clip.durationMs / 1000f)} detik",
-                                color = NeonCyan,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Text(
-                            text = "BAGIKAN LANGSUNG KE MEDIA SOSIAL:",
-                            color = Color(0xFF94A3B8),
-                            fontSize = 11.sp,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        // Social Platform Quick Share Grid
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly
+                        // File Information Card
+                        Surface(
+                            color = Color(0xFF0F121B),
+                            shape = RoundedCornerShape(12.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF22293D)),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            SocialShareButton(
-                                name = "TikTok",
-                                badgeColor = TikTokBlack,
-                                textColor = Color.White,
-                                onClick = {
-                                    shareToApp(context, "com.zhiliaoapp.musically", clip)
-                                }
-                            )
-
-                            SocialShareButton(
-                                name = "Reels",
-                                badgeColor = ReelsPurple,
-                                textColor = Color.White,
-                                onClick = {
-                                    shareToApp(context, "com.instagram.android", clip)
-                                }
-                            )
-
-                            SocialShareButton(
-                                name = "Shorts",
-                                badgeColor = YouTubeRed,
-                                textColor = Color.White,
-                                onClick = {
-                                    shareToApp(context, "com.google.android.youtube", clip)
-                                }
-                            )
-
-                            SocialShareButton(
-                                name = "WhatsApp",
-                                badgeColor = Color(0xFF25D366),
-                                textColor = Color.White,
-                                onClick = {
-                                    shareToApp(context, "com.whatsapp", clip)
-                                }
-                            )
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                ExportDetailRow(label = "Nama File", value = info.fileName)
+                                ExportDetailRow(label = "Durasi", value = "${info.durationMs / 1000}s (${formatDuration(info.durationMs)})")
+                                ExportDetailRow(label = "Resolusi", value = info.resolution)
+                                ExportDetailRow(label = "Ukuran File", value = formatSize(info.fileSizeBytes))
+                                ExportDetailRow(label = "Lokasi", value = "Movies/Clipper")
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // General System Share Button
-                        Button(
-                            onClick = {
-                                shareGeneral(context, clip)
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = CrimsonRedPrimary,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("share_clip_button")
+                        // Required Action Buttons:
+                        // 1. PUTAR VIDEO
+                        // 2. BUKA GALERI
+                        // 3. BAGIKAN VIDEO
+                        // 4. EXPORT LAGI
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(imageVector = Icons.Default.Share, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Bagikan Lewat Menu Lainnya", fontWeight = FontWeight.Bold)
+                            Button(
+                                onClick = { playVideo(context, info.contentUri) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = CrimsonRedPrimary,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("play_exported_video_button")
+                            ) {
+                                Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Putar Video", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            FilledTonalButton(
+                                onClick = { openGallery(context, info.contentUri) },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.FolderOpen, null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Buka Galeri", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { shareVideo(context, info.contentUri, info.fileName) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NeonCyan,
+                                    contentColor = Color.Black
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("share_exported_video_button")
+                            ) {
+                                Icon(Icons.Default.Share, null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Bagikan", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            OutlinedButton(
+                                onClick = onDismiss,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Export Lagi", fontSize = 12.sp)
+                            }
                         }
                     }
 
                     is ExportUiState.Error -> {
-                        Text(
-                            text = state.message,
-                            color = Color(0xFFF87171),
-                            fontSize = 13.sp,
-                            textAlign = TextAlign.Center
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFF38151B), RoundedCornerShape(12.dp))
+                                .padding(14.dp)
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = state.message,
+                                    color = Color(0xFFFCA5A5),
+                                    fontSize = 13.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Button(
+                                    onClick = onDismiss,
+                                    colors = ButtonDefaults.buttonColors(containerColor = CrimsonRedPrimary),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Coba Lagi")
+                                }
+                            }
+                        }
                     }
 
                     is ExportUiState.Idle -> {}
@@ -281,71 +296,75 @@ fun ExportShareModal(
 }
 
 @Composable
-fun SocialShareButton(
-    name: String,
-    badgeColor: Color,
-    textColor: Color,
-    onClick: () -> Unit
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
+fun ExportDetailRow(label: String, value: String) {
+    Row(
         modifier = Modifier
-            .clickable(onClick = onClick)
-            .padding(6.dp)
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Surface(
-            shape = CircleShape,
-            color = badgeColor,
-            border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF3B4561)),
-            modifier = Modifier.size(48.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = Icons.Default.IosShare,
-                    contentDescription = name,
-                    tint = textColor,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-        }
-        Spacer(modifier = Modifier.height(4.dp))
+        Text(text = label, color = Color(0xFF94A3B8), fontSize = 11.sp, fontWeight = FontWeight.Medium)
         Text(
-            text = name,
+            text = value,
             color = Color.White,
             fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace
         )
     }
 }
 
-private fun shareToApp(context: Context, packageName: String, clip: VideoClipEntity) {
-    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_SUBJECT, clip.title)
-        putExtra(
-            Intent.EXTRA_TEXT,
-            "${clip.title}\n\nKlip video dibuat dengan TubeClip (${clip.aspectRatio})\n${clip.sourceVideoUrl}\n#${clip.tags.replace(",", " #")}"
-        )
-        setPackage(packageName)
-    }
-
+private fun playVideo(context: Context, contentUriString: String) {
     try {
-        context.startActivity(shareIntent)
+        val uri = Uri.parse(contentUriString)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "video/mp4")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(intent)
     } catch (e: Exception) {
-        // Fallback to general chooser if specific app isn't installed
-        shareGeneral(context, clip)
-        Toast.makeText(context, "Membuka menu bagikan...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Tidak ada aplikasi video player ditemukan: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }
 
-private fun shareGeneral(context: Context, clip: VideoClipEntity) {
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_SUBJECT, clip.title)
-        putExtra(
-            Intent.EXTRA_TEXT,
-            "${clip.title}\n\nKlip video dibuat dengan TubeClip (${clip.aspectRatio})\nSumber: ${clip.sourceVideoUrl}\n#${clip.tags.replace(",", " #")}"
-        )
+private fun openGallery(context: Context, contentUriString: String) {
+    try {
+        val uri = Uri.parse(contentUriString)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "video/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Buka di Galeri / Foto"))
+    } catch (e: Exception) {
+        Toast.makeText(context, "Gagal membuka galeri: ${e.message}", Toast.LENGTH_SHORT).show()
     }
-    context.startActivity(Intent.createChooser(intent, "Bagikan Klip Video Ke:"))
+}
+
+private fun shareVideo(context: Context, contentUriString: String, fileName: String) {
+    try {
+        val uri = Uri.parse(contentUriString)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "video/mp4"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, fileName)
+            putExtra(Intent.EXTRA_TEXT, "Klip video dipotong menggunakan Clipper AI (Format Portrait 9:16) #Clipper #Viral #Reels #TikTok")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Bagikan Klip Video Ke:"))
+    } catch (e: Exception) {
+        Toast.makeText(context, "Gagal membagikan video: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun formatDuration(ms: Long): String {
+    val totalSec = ms / 1000
+    val m = totalSec / 60
+    val s = totalSec % 60
+    return "%02d:%02d".format(m, s)
+}
+
+private fun formatSize(bytes: Long): String {
+    if (bytes <= 0L) return "0 MB"
+    val mb = bytes / (1024.0 * 1024.0)
+    return "%.1f MB".format(mb)
 }

@@ -181,9 +181,6 @@ fun TubeClipApp(
             AppScreen.LIBRARY -> {
                 LibraryScreen(
                     viewModel = viewModel,
-                    onClipClick = { clip ->
-                        currentScreen = AppScreen.EDITOR
-                    },
                     modifier = Modifier.padding(innerPadding)
                 )
             }

@@ -1,10 +1,11 @@
 package com.example
 
 import com.example.data.repository.VideoRepository
+import com.example.data.repository.YouTubeParseResult
 import com.example.ui.components.formatSeconds
 import com.example.ui.components.formatTimeMs
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ExampleUnitTest {
@@ -13,14 +14,16 @@ class ExampleUnitTest {
     @Test
     fun testParseYouTubeUrl() {
         val standardUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        val video = videoRepository.parseYouTubeUrl(standardUrl)
-        assertNotNull(video)
-        assertEquals("dQw4w9WgXcQ", video?.id)
+        val result = videoRepository.parseYouTubeUrl(standardUrl)
+        assertTrue(result is YouTubeParseResult.Valid)
+        val valid = result as YouTubeParseResult.Valid
+        assertEquals("dQw4w9WgXcQ", valid.videoId)
 
         val shortUrl = "https://youtu.be/jNQXAC9IVRw"
-        val video2 = videoRepository.parseYouTubeUrl(shortUrl)
-        assertNotNull(video2)
-        assertEquals("jNQXAC9IVRw", video2?.id)
+        val result2 = videoRepository.parseYouTubeUrl(shortUrl)
+        assertTrue(result2 is YouTubeParseResult.Valid)
+        val valid2 = result2 as YouTubeParseResult.Valid
+        assertEquals("jNQXAC9IVRw", valid2.videoId)
     }
 
     @Test

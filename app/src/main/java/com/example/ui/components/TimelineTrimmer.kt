@@ -15,12 +15,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCut
-import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -40,6 +41,14 @@ import com.example.ui.theme.CrimsonRedPrimary
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.ViralYellow
 
+enum class ClipDurationPreset(val label: String, val seconds: Int) {
+    SEC_15("15s (Shorts)", 15),
+    SEC_30("30s (Reels)", 30),
+    SEC_45("45s (Story)", 45),
+    SEC_60("60s (TikTok)", 60),
+    CUSTOM("Custom", -1)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TimelineTrimmer(
@@ -47,11 +56,16 @@ fun TimelineTrimmer(
     inTimestampMs: Long,
     outTimestampMs: Long,
     currentPositionMs: Long,
+    selectedPreset: ClipDurationPreset,
+    onPresetSelected: (ClipDurationPreset) -> Unit,
     onInChanged: (Long) -> Unit,
     onOutChanged: (Long) -> Unit,
     onSeekPosition: (Long) -> Unit,
     onAdjustIn: (Long) -> Unit,
     onAdjustOut: (Long) -> Unit,
+    onPreviewClip: () -> Unit,
+    onSetInFromPlayhead: () -> Unit,
+    onSetOutFromPlayhead: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val totalMs = (totalDurationSeconds * 1000L).coerceAtLeast(1000L).toFloat()
@@ -79,21 +93,20 @@ fun TimelineTrimmer(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Pemotong Klip Video",
+                        text = "Pemotong Timeline Video",
                         color = Color.White,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
 
-                // Duration indicator with TikTok/Reels limit status
                 val isOptimalForReels = clipDurationSec in 5.0f..60.0f
                 Surface(
                     color = if (isOptimalForReels) Color(0xFF0F382E) else Color(0xFF38151B),
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        text = "Durasi: ${"%.1f".format(clipDurationSec)}s ${if (isOptimalForReels) "✨ Optimal" else "⚠️"}",
+                        text = "Durasi Klip: ${"%.1f".format(clipDurationSec)}s ${if (isOptimalForReels) "✨ Optimal" else "⚠️"}",
                         color = if (isOptimalForReels) Color(0xFF4ADE80) else Color(0xFFF87171),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -104,10 +117,40 @@ fun TimelineTrimmer(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Time stamps display: [In] -> [Current] -> [Out]
+            // Duration Presets (15s, 30s, 45s, 60s, Custom)
+            Text(
+                text = "PILIHAN DURASI CEPAT:",
+                color = Color(0xFF94A3B8),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(6.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                ClipDurationPreset.entries.forEach { preset ->
+                    FilterChip(
+                        selected = selectedPreset == preset,
+                        onClick = { onPresetSelected(preset) },
+                        label = { Text(preset.label, fontSize = 11.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = CrimsonRedPrimary,
+                            selectedLabelColor = Color.White,
+                            containerColor = Color(0xFF1B2030),
+                            labelColor = Color(0xFF94A3B8)
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Time stamps display: [In] -> [Playhead] -> [Out]
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
                     Text(text = "TITIK AWAL (IN)", color = Color(0xFF94A3B8), fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -155,7 +198,6 @@ fun TimelineTrimmer(
                     .border(1.dp, Color(0xFF1E2433), RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                // Background visual filmstrip pattern
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -193,6 +235,50 @@ fun TimelineTrimmer(
             }
 
             Spacer(modifier = Modifier.height(10.dp))
+
+            // Playhead Mark Buttons & Preview Clip
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilledTonalButton(
+                        onClick = onSetInFromPlayhead,
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Text("Set [In]", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    FilledTonalButton(
+                        onClick = onSetOutFromPlayhead,
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Text("Set [Out]", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                FilledTonalButton(
+                    onClick = onPreviewClip,
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = NeonCyan.copy(alpha = 0.15f),
+                        contentColor = NeonCyan
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Preview Klip", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Precision Fine-Tuning Controls (-1s, -0.1s, +0.1s, +1s)
             Row(

@@ -20,5 +20,9 @@ data class VideoClipEntity(
     val transitionEffect: String, // "none", "fade", "zoom_punch", "glitch", "slide"
     val speedMultiplier: Float, // 0.5f, 1.0f, 1.5f, 2.0f
     val createdAt: Long,
-    val tags: String
+    val tags: String,
+    val outputFilePath: String = "",
+    val outputContentUri: String = "",
+    val fileSizeBytes: Long = 0L,
+    val resolution: String = "1080x1920"
 )
